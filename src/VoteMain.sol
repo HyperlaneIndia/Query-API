@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
+import "@hyperlane-xyz/core/contracts/interfaces/IInterchainGasPaymaster.sol";
+import "@hyperlane-xyz/core/contracts/interfaces/IMailbox.sol";
+
 contract VoteMain {
 
     enum Vote{ FOR, AGAINST } // Creating enums to denote two types of vote 
@@ -16,14 +19,16 @@ contract VoteMain {
     }
 
 
-    mapping (uint256 => Proposal) proposals; // Mapping to store the proposals
-    mapping (address => mapping(uint256 => bool)) votes; // Mapping to store the votes in order to prevent double voting
+    mapping (uint256 => Proposal) public proposals; // Mapping to store the proposals
+    mapping (address => mapping(uint256 => bool)) public votes; // Mapping to store the votes in order to prevent double voting
 
 
     address mailbox; // address of mailbox contract
+    address interchainGasPaymaster;
 
-    constructor(address _mailbox){
+    constructor(address _mailbox, address _interchainGasPaymaster) payable {
         mailbox = _mailbox;
+        interchainGasPaymaster = _interchainGasPaymaster;
     }
 
     // Modifier so that only mailbox can call particular functions
@@ -52,7 +57,7 @@ contract VoteMain {
     // Internal voting function which holds the voting logic
     function _vote(uint256 _proposalId, address _voter, Vote _voteType) internal{
         require(proposals[_proposalId].createdTimestamp != 0, "Proposal doesn't exist !!!");
-        require(proposals[_proposalId].createdTimestamp + proposals[_proposalId].votingPeriod <= block.timestamp, "Voting period already ended !!!");
+        require(proposals[_proposalId].createdTimestamp + proposals[_proposalId].votingPeriod >= block.timestamp, "Voting period already ended !!!");
         require(!votes[_voter][_proposalId], "Voter already voted !!!");
         if(_voteType == Vote.FOR){
             proposals[_proposalId].forVotes += 1;
@@ -65,14 +70,34 @@ contract VoteMain {
 
     // handle function which is called by the mailbox to bridge votes from other chains
     function handle(uint32 _origin, bytes32 _sender, bytes memory _body) external onlyMailbox{
-        (uint256 _proposalId, address _voter, Vote _voteType) = abi.decode(_body, (uint256, address, Vote));
-        _vote(_proposalId, _voter, _voteType);
+        (uint256 callType, bytes memory _data) = abi.decode(_body, (uint256, bytes));
+        if(callType == 1){
+            (uint256 _proposalId, address _voter, Vote _voteType) = abi.decode(_data, (uint256, address, Vote));
+            _vote(_proposalId, _voter, _voteType);
+        }else if(callType == 2){
+            (uint256 _proposalId) = abi.decode(_data, (uint256));
+            (uint256 forVotes, uint256 againstVotes) = getVotes(_proposalId);
+            bytes32 messageId = IMailbox(mailbox).dispatch(_origin, _sender, abi.encode(_proposalId, forVotes, againstVotes));
+            uint256 quote = IInterchainGasPaymaster(interchainGasPaymaster).quoteGasPayment(_origin, 10000);
+            IInterchainGasPaymaster(interchainGasPaymaster).payForGas{value: quote}(
+                messageId,
+                _origin,
+                10000,
+                address(this)
+            );
+        }
+        
     }
 
     // function to get votes for a particular proposal
-    function getVotes(uint256 _proposalId) external view returns(uint256 _for, uint256 _against){
+    function getVotes(uint256 _proposalId) public view returns(uint256 _for, uint256 _against){
         _for = proposals[_proposalId].forVotes;
         _against = proposals[_proposalId].againstVotes;
+    }
+
+    // alignment preserving cast
+    function bytes32ToAddress(bytes32 _buf) internal pure returns (address) {
+        return address(uint160(uint256(_buf)));
     }
 
 }
