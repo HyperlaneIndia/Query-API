@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "@hyperlane-xyz/core/contracts/interfaces/IInterchainGasPaymaster.sol";
 import "@hyperlane-xyz/core/contracts/interfaces/IMailbox.sol";
 
 contract VoteRouter{
@@ -17,7 +16,6 @@ contract VoteRouter{
 
     // variables to store important contract addresses and domain identifiers
     address mailbox;
-    address interchainGasPaymaster;
     uint32 domainId;
     address voteContract;
 
@@ -27,9 +25,8 @@ contract VoteRouter{
         _;
     }
 
-    constructor(address _mailbox, address _interchainGasPaymaster, uint32 _domainId, address _voteContract){
+    constructor(address _mailbox, uint32 _domainId, address _voteContract){
         mailbox = _mailbox;
-        interchainGasPaymaster = _interchainGasPaymaster;
         domainId = _domainId;
         voteContract = _voteContract;
     }
@@ -37,27 +34,15 @@ contract VoteRouter{
     // By calling this function you can cast your vote on other chain
     function sendVote(uint256 _proposalId, Vote _voteType) payable external {
         bytes memory data = abi.encode(1,abi.encode(_proposalId,msg.sender,_voteType));
-        bytes32 messageId = IMailbox(mailbox).dispatch(domainId, addressToBytes32(voteContract), data);
-        uint256 quote = IInterchainGasPaymaster(interchainGasPaymaster).quoteGasPayment(domainId, 10000);
-        IInterchainGasPaymaster(interchainGasPaymaster).payForGas{value: quote}(
-            messageId,
-            domainId,
-            10000,
-            msg.sender
-        );
+        uint256 quote = IMailbox(mailbox).quoteDispatch(domainId, addressToBytes32(voteContract), data);
+        IMailbox(mailbox).dispatch{value: quote}(domainId, addressToBytes32(voteContract), data);
     }
 
     // By calling this function you can fetch votes from the main contract
     function fetchVotes(uint256 _proposalId) payable external{
         bytes memory data = abi.encode(2,abi.encode(_proposalId));
-        bytes32 messageId = IMailbox(mailbox).dispatch(domainId, addressToBytes32(voteContract), data);
-        uint256 quote = IInterchainGasPaymaster(interchainGasPaymaster).quoteGasPayment(domainId, 10000);
-        IInterchainGasPaymaster(interchainGasPaymaster).payForGas{value: quote}(
-            messageId,
-            domainId,
-            10000,
-            msg.sender
-        );
+        uint256 quote = IMailbox(mailbox).quoteDispatch(domainId, addressToBytes32(voteContract), data);
+        IMailbox(mailbox).dispatch{value: quote}(domainId, addressToBytes32(voteContract), data);
     }
 
     // handle function which is called by the mailbox to bridge votes from other chains
