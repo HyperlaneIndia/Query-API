@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "@hyperlane-xyz/core/contracts/interfaces/IInterchainGasPaymaster.sol";
 import "@hyperlane-xyz/core/contracts/interfaces/IMailbox.sol";
 
 contract VoteMain {
@@ -24,11 +23,9 @@ contract VoteMain {
 
 
     address mailbox; // address of mailbox contract
-    address interchainGasPaymaster;
 
-    constructor(address _mailbox, address _interchainGasPaymaster) payable {
+    constructor(address _mailbox) payable {
         mailbox = _mailbox;
-        interchainGasPaymaster = _interchainGasPaymaster;
     }
 
     // Modifier so that only mailbox can call particular functions
@@ -77,14 +74,9 @@ contract VoteMain {
         }else if(callType == 2){
             (uint256 _proposalId) = abi.decode(_data, (uint256));
             (uint256 forVotes, uint256 againstVotes) = getVotes(_proposalId);
-            bytes32 messageId = IMailbox(mailbox).dispatch(_origin, _sender, abi.encode(_proposalId, forVotes, againstVotes));
-            uint256 quote = IInterchainGasPaymaster(interchainGasPaymaster).quoteGasPayment(_origin, 10000);
-            IInterchainGasPaymaster(interchainGasPaymaster).payForGas{value: quote}(
-                messageId,
-                _origin,
-                10000,
-                address(this)
-            );
+            bytes memory data = abi.encode(_proposalId, forVotes, againstVotes);
+            uint256 quote = IMailbox(mailbox).quoteDispatch(_origin, _sender, data);
+            IMailbox(mailbox).dispatch{value: quote}(_origin, _sender, data);
         }
         
     }
@@ -100,4 +92,5 @@ contract VoteMain {
         return address(uint160(uint256(_buf)));
     }
 
+    receive() external payable{}
 }
